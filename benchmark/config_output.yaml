@@ -1,0 +1,67 @@
+exp_id: mtad_gat_CVT
+benchmark_dir: ./benchmark_results
+data_root: ../data/CVT/
+dataset: cvt
+dataset_id: CVT
+
+model_id: mtad_gat
+model_root: ./details
+model_type: other
+
+
+log: '3'
+device: 0
+dim: 3
+
+
+
+
+
+dropout: 0.3
+nb_epoch: 20
+batch_size: 64
+lr: 0.0001
+normalize: minmax
+window_size: 50
+stride: 1
+shuffle: true
+num_workers: 0
+
+need_training: true
+next_steps: 0
+train_postfix: train.pkl
+test_postfix: test_03.pkl
+test_label_postfix: test_label_03.pkl
+valid_ratio: 0
+train_nrows: 30000
+test_nrows: null
+
+
+
+# 实体
+entities:
+  - cvt
+# 评估参数
+eval:
+  best_params:
+    target_direction: max
+    target_metric: f1
+  metrics:
+    - f1
+    - delay
+  point_adjustment:
+    - true
+    - false
+  pot_params:
+    dynamic: false
+    level:
+        - 0.99
+        - 0.98
+        - 0.97
+        - 0.9
+        - 0.8
+    q: 0.01
+  thresholding:
+    - best
+    - pot
+    - eps
