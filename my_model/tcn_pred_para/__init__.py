@@ -1,1 +1,1 @@
-from .tcn_pred import TCN_PRED
+from .tcn_ae import TCN_AE

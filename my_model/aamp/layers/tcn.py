@@ -5,28 +5,46 @@ import torch
 
 from .torch_utils import activations
 from .same_pad import SameCausalZeroPad1d
+
 class TCNResidualBlock(torch.nn.Module):
-    def __init__(self, input_dim: int, dilation_rate: int, nb_filters: int, kernel_size: int,
+    def __init__(self, input_dim: int, dilation_rate: int, nb_filters: int, kernel_size: tuple,
                  padding: str, activation: Union[str, Callable] = 'relu',
                  dropout_rate: float = 0, use_batch_norm: bool = False, use_layer_norm: bool = False):
+        """
+        Defines a parallelized residual block for the WaveNet TCN. Input needs to be of shape (B, D, T).
+
+        Args:
+            dilation_rate: The dilation power of 2 we are using for this residual block
+            nb_filters: The number of convolutional filters to use in this block
+            kernel_size: The size of the convolutional kernel
+            padding: The padding used in the convolutional layers, 'same' or 'causal'.
+            activation: The final activation used in o = Activation(x + F(x))
+            dropout_rate: Float between 0 and 1. Fraction of the input units to drop.
+            use_batch_norm: Whether to use batch normalization in the residual layers or not.
+            use_layer_norm: Whether to use layer normalization in the residual layers or not.
+        """
 
         super().__init__()
+        kernel_size1 = kernel_size[0]
+        kernel_size2 = kernel_size[1]
 
+        # Define the two parallel conv layers
         if padding == 'causal':
             self.conv1 = torch.nn.Sequential(
-                SameCausalZeroPad1d(kernel_size, dilation=dilation_rate),
-                torch.nn.Conv1d(input_dim, nb_filters, kernel_size=kernel_size, dilation=dilation_rate, padding=0)
+                SameCausalZeroPad1d(kernel_size1, dilation=dilation_rate),
+                torch.nn.Conv1d(input_dim, nb_filters, kernel_size=kernel_size1, dilation=dilation_rate, padding=0)
             )
             self.conv2 = torch.nn.Sequential(
-                SameCausalZeroPad1d(kernel_size, dilation=dilation_rate),
-                torch.nn.Conv1d(nb_filters, nb_filters, kernel_size=kernel_size, dilation=dilation_rate, padding=0)
+                SameCausalZeroPad1d(kernel_size2, dilation=dilation_rate),
+                torch.nn.Conv1d(input_dim, nb_filters, kernel_size=kernel_size2, dilation=dilation_rate, padding=0)
             )
         else:
-            self.conv1 = torch.nn.Conv1d(input_dim, nb_filters, kernel_size=kernel_size, dilation=dilation_rate,
+            self.conv1 = torch.nn.Conv1d(input_dim, nb_filters, kernel_size=kernel_size1, dilation=dilation_rate,
                                          padding=padding)
-            self.conv2 = torch.nn.Conv1d(nb_filters, nb_filters, kernel_size=kernel_size, dilation=dilation_rate,
+            self.conv2 = torch.nn.Conv1d(input_dim, nb_filters, kernel_size=kernel_size2, dilation=dilation_rate,
                                          padding=padding)
 
+        # Normalization options
         if use_batch_norm:
             self.norm1 = torch.nn.BatchNorm1d(nb_filters)
             self.norm2 = torch.nn.BatchNorm1d(nb_filters)
@@ -37,38 +55,47 @@ class TCNResidualBlock(torch.nn.Module):
             self.norm1 = torch.nn.Identity()
             self.norm2 = torch.nn.Identity()
 
+        # Activation and dropout
         if isinstance(activation, str):
             activation = activations[activation]
         self.activation = activation
-
         self.dropout = torch.nn.Dropout2d(dropout_rate, inplace=True) if dropout_rate > 0 else torch.nn.Identity()
 
+        # Ensure input and output dimensions match
         if nb_filters != input_dim:
             self.shape_match_conv = torch.nn.Conv1d(input_dim, nb_filters, kernel_size=1, padding=0)
         else:
             self.shape_match_conv = torch.nn.Identity()
 
-    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        # Weight for balancing the residual connections
+        self.alpha = torch.nn.Parameter(torch.tensor(0.5))  # Learnable parameter
 
+    def forward(self, x: torch.Tensor) -> Tuple[torch.Tensor, torch.Tensor]:
+        """
+        Returns: A tuple where the first element is the residual model tensor, and the second
+                 is the skip connection tensor.
+        """
         orig_input = x
 
-        x = self.conv1(x)
-        x = self.norm1(x)
-        x = self.activation(x)
-        x = self.dropout(x)
+        # Parallel processing through the two conv layers
+        x1 = self.conv1(x)
+        x1 = self.norm1(x1)
+        x1 = self.activation(x1)
+        x1 = self.dropout(x1)
 
-        x = self.conv2(x)
-        x = self.norm2(x)
-        x = self.activation(x)
-        x = self.dropout(x)
+        x2 = self.conv2(x)
+        x2 = self.norm2(x2)
+        x2 = self.activation(x2)
+        x2 = self.dropout(x2)
 
-        x = self.activation(x)
+        # Combine the outputs of the two conv layers
+        combined = x1 + x2
 
+        # Residual connection
         x2 = self.shape_match_conv(orig_input)
-        res_x = x2 + x
+        res_x = self.alpha * x2 + (1 - self.alpha) * combined
         res_act_x = self.activation(res_x)
-        return res_act_x, x
-
+        return res_act_x, combined
 
 
 class TCN(torch.nn.Module):

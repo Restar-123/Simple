@@ -15,7 +15,7 @@ import numpy as np
 class TCN_PRED(nn.Module):
     def __init__(self, input_dimension: int=3,
                  device: int=0,
-                 dilations = (1, 2, 4, 8),
+                 dilations: List[int] = (1, 2, 4, 8),
                  nb_filters: Union[int, List[int]] = 20,
                  kernel_size: tuple = (3,9),
                  nb_stacks: int = 1,

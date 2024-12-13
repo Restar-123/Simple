@@ -27,11 +27,11 @@ stride: 1
 shuffle: true
 num_workers: 0
 
-need_training: true
-next_steps: 0
+need_training: false
+next_steps: 1
 train_postfix: train.pkl
-test_postfix: test_03.pkl
-test_label_postfix: test_label_03.pkl
+test_postfix: test_01.pkl
+test_label_postfix: test_label_01.pkl
 valid_ratio: 0
 train_nrows: 30000
 test_nrows: null

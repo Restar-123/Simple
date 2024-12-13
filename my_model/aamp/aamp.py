@@ -5,14 +5,13 @@ import torch
 import torch.nn as nn
 import numpy as np
 from common.utils import set_device
+from .layers.tcn import TCN
 
 from .layers.modules import (
     ConvLayer,
     FeatureAttentionLayer,
     TemporalAttentionLayer,
 )
-from .tcn_ae_para import TCN_AE
-from .tcn_pred_para import TCN_PRED
 
 
 class LSKblock1D(nn.Module):
@@ -62,7 +61,7 @@ class LSKblock1D(nn.Module):
 
 
 
-class Dual_Flow_TCN(nn.Module):
+class AAMP(nn.Module):
     def __init__(
         self,
         n_features=3,
@@ -92,35 +91,44 @@ class Dual_Flow_TCN(nn.Module):
         pre_activation_conv1d='linear',
         pre_use_skip_connections=True,
     ):
-        super(Dual_Flow_TCN, self).__init__()
+        super(AAMP, self).__init__()
 
         window_size = window_size - next_steps
         self.n_features = n_features
         self.conv = ConvLayer(n_features, kernel_size)
         self.lsk_block = LSKblock1D(3)
 
-        self.pred_model = TCN_PRED(next_steps=next_steps,dilations=pre_dilations,nb_filters=pre_nb_filters,kernel_size=pre_kernel_size,
-                                   nb_stacks=pre_nb_stacks,padding=pre_padding,dropout_rate=pre_dropout_rate,activation_conv1d=pre_activation_conv1d,
-                                   use_skip_connections=pre_use_skip_connections)
-        self.recon_model = TCN_AE(dilations = ae_dilations, nb_filters= ae_nb_filters, kernel_size=ae_kernel_size,nb_stacks=ae_nb_stacks,
-                                  padding=ae_padding,dropout_rate=ae_dropout,filters_conv1d=ae_filters_conv1d,activation_conv1d=ae_activation_conv1d,
-                                  latent_sample_rate=ae_latent_sample_rate,use_skip_connections=ae_use_skip_connections)
+        self.encoder = TCN(3, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
+                           dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
+                           n_steps=0)
 
+        self.recon = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
+                           dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
+                           n_steps=0)
+
+        self.pred = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
+                           dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
+                           n_steps=next_steps)
+        self.linear = torch.nn.Conv1d(ae_nb_filters, 3, kernel_size=1, padding=ae_padding)
         self.device = set_device(device)
         self.to(self.device)
 
 
     def forward(self, x):
         lsk_x = self.lsk_block(x)
-        # convx = self.conv(x)
-        # h_feat = self.feature_gat(x)
-        # h_temp = self.temporal_gat(x)
 
-        # h_end = x + h_feat + h_temp
+        x = x + lsk_x
+        x = x.transpose(1, 2)
+        z = self.encoder(x)
 
-        h_end = x + lsk_x
-        pred = self.pred_model(h_end)
-        recon = self.recon_model(h_end)
+
+        recon = self.recon(z)
+        recon = self.linear(recon)
+        recon = recon.transpose(1, 2)
+
+        pred = self.pred(z)
+        pred = self.linear(pred)
+        pred = pred.transpose(1, 2)
 
         return pred, recon
 
@@ -217,11 +225,9 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
 
 if __name__ == '__main__':
 
-    model = Dual_Flow_TCN(
-
-        )
-    input = torch.randn(64,49,3)
-    label = torch.randn(64,1,3)
+    model = AAMP()
+    input = torch.randn(64,49,3).to(model.device)
+    label = torch.randn(64,1,3).to(model.device)
     pred,recon = model(input)
     print(pred.shape)
     print(recon.shape)

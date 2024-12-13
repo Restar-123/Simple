@@ -5,6 +5,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from common.utils import set_device
+from .layers.tcn import TCN
 
 from .layers.modules import (
     ConvLayer,
