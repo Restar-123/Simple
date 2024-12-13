@@ -27,7 +27,7 @@ stride: 1
 shuffle: true
 num_workers: 0
 
-need_training: false
+need_training: true
 next_steps: 1
 train_postfix: train.pkl
 test_postfix: test_01.pkl

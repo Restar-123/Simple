@@ -1,19 +1,18 @@
 import os
-import math
 import time
 import logging
 import torch
 import torch.nn as nn
 import numpy as np
 from common.utils import set_device
-from .layers.tcn import TCN
-from torch.nn.parameter import Parameter
-
-from torch.nn import functional as F
 
 from .layers.modules import (
     ConvLayer,
+    FeatureAttentionLayer,
+    TemporalAttentionLayer,
 )
+from .tcn_ae_para import TCN_AE
+from .tcn_pred_para import TCN_PRED
 
 
 class LSKblock1D(nn.Module):
@@ -61,101 +60,7 @@ class LSKblock1D(nn.Module):
         y = y.transpose(1, 2)
         return y  # 输出 (N, C, T)
 
-
-class MemoryUnit(nn.Module):
-    def __init__(self, mem_dim, fea_dim, shrink_thres=0.0025):
-        super(MemoryUnit, self).__init__()
-        self.mem_dim = mem_dim
-        self.fea_dim = fea_dim
-        self.weight = Parameter(torch.Tensor(self.mem_dim, self.fea_dim))  # M x C
-        self.bias = None
-        self.shrink_thres= shrink_thres
-        # self.hard_sparse_shrink_opt = nn.Hardshrink(lambd=shrink_thres)
-
-        self.reset_parameters()
-
-    def reset_parameters(self):
-        stdv = 1. / math.sqrt(self.weight.size(1))
-        self.weight.data.uniform_(-stdv, stdv)
-        if self.bias is not None:
-            self.bias.data.uniform_(-stdv, stdv)
-
-    def forward(self, input):
-        att_weight = F.linear(input, self.weight)  # Fea x Mem^T, (TxC) x (CxM) = TxM
-        att_weight = F.softmax(att_weight, dim=1)  # TxM
-        # ReLU based shrinkage, hard shrinkage for positive value
-        if(self.shrink_thres>0):
-            att_weight = hard_shrink_relu(att_weight, lambd=self.shrink_thres)
-            # att_weight = F.softshrink(att_weight, lambd=self.shrink_thres)
-            # normalize???
-            att_weight = F.normalize(att_weight, p=1, dim=1)
-            # att_weight = F.softmax(att_weight, dim=1)
-            # att_weight = self.hard_sparse_shrink_opt(att_weight)
-        mem_trans = self.weight.permute(1, 0)  # Mem^T, MxC
-        output = F.linear(att_weight, mem_trans)  # AttWeight x Mem^T^T = AW x Mem, (TxM) x (MxC) = TxC
-        return {'output': output, 'att': att_weight}  # output, att_weight
-
-    def extra_repr(self):
-        return 'mem_dim={}, fea_dim={}'.format(
-            self.mem_dim, self.fea_dim is not None
-        )
-
-class MemModule(nn.Module):
-    def __init__(self, mem_dim, fea_dim, shrink_thres=0.0025):
-        super(MemModule, self).__init__()
-        self.mem_dim = mem_dim
-        self.fea_dim = fea_dim
-        self.shrink_thres = shrink_thres
-        self.memory = MemoryUnit(self.mem_dim, self.fea_dim, self.shrink_thres)
-
-    def forward(self, input):
-        s = input.data.shape
-        l = len(s)
-
-        if l == 3:
-            x = input.permute(0, 2, 1)
-        elif l == 4:
-            x = input.permute(0, 2, 3, 1)
-        elif l == 5:
-            x = input.permute(0, 2, 3, 4, 1)
-        else:
-            x = []
-            print('wrong feature map size')
-        x = x.contiguous()
-        x = x.view(-1, s[1])
-        #
-        y_and = self.memory(x)
-        #
-        y = y_and['output']
-        att = y_and['att']
-
-        if l == 3:
-            y = y.view(s[0], s[2], s[1])
-            y = y.permute(0, 2, 1)
-            att = att.view(s[0], s[2], self.mem_dim)
-            att = att.permute(0, 2, 1)
-        elif l == 4:
-            y = y.view(s[0], s[2], s[3], s[1])
-            y = y.permute(0, 3, 1, 2)
-            att = att.view(s[0], s[2], s[3], self.mem_dim)
-            att = att.permute(0, 3, 1, 2)
-        elif l == 5:
-            y = y.view(s[0], s[2], s[3], s[4], s[1])
-            y = y.permute(0, 4, 1, 2, 3)
-            att = att.view(s[0], s[2], s[3], s[4], self.mem_dim)
-            att = att.permute(0, 4, 1, 2, 3)
-        else:
-            y = x
-            att = att
-        return y
-
-# relu based hard shrinkage function, only works for positive values
-def hard_shrink_relu(input, lambd=0, epsilon=1e-12):
-    output = (F.relu(input-lambd) * input) / (torch.abs(input - lambd) + epsilon)
-    return output
-
-
-class AAMP(nn.Module):
+class Dual_Flow_TCN(nn.Module):
     def __init__(
         self,
         n_features=3,
@@ -185,48 +90,35 @@ class AAMP(nn.Module):
         pre_activation_conv1d='linear',
         pre_use_skip_connections=True,
     ):
-        super(AAMP, self).__init__()
+        super(Dual_Flow_TCN, self).__init__()
 
         window_size = window_size - next_steps
         self.n_features = n_features
         self.conv = ConvLayer(n_features, kernel_size)
         self.lsk_block = LSKblock1D(3)
 
-        self.encoder = TCN(3, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
-                           dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
-                           n_steps=0)
-        self.memory = MemModule(mem_dim=100, fea_dim=ae_nb_filters, shrink_thres=0.0025)
+        self.pred_model = TCN_PRED(next_steps=next_steps,dilations=pre_dilations,nb_filters=pre_nb_filters,kernel_size=pre_kernel_size,
+                                   nb_stacks=pre_nb_stacks,padding=pre_padding,dropout_rate=pre_dropout_rate,activation_conv1d=pre_activation_conv1d,
+                                   use_skip_connections=pre_use_skip_connections)
+        self.recon_model = TCN_AE(dilations = ae_dilations, nb_filters= ae_nb_filters, kernel_size=ae_kernel_size,nb_stacks=ae_nb_stacks,
+                                  padding=ae_padding,dropout_rate=ae_dropout,filters_conv1d=ae_filters_conv1d,activation_conv1d=ae_activation_conv1d,
+                                  latent_sample_rate=ae_latent_sample_rate,use_skip_connections=ae_use_skip_connections)
 
-        self.recon = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
-                           dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
-                           n_steps=0)
-
-        self.pred = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
-                           dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
-                           n_steps=next_steps)
-        self.activation = torch.nn.LeakyReLU(negative_slope=0.2)
-        self.linear = torch.nn.Conv1d(ae_nb_filters, 3, kernel_size=1, padding=ae_padding)
-        self.device = set_device(device)
+        self.device = torch.device("cuda:" + str(device))
         self.to(self.device)
 
 
     def forward(self, x):
         lsk_x = self.lsk_block(x)
+        convx = self.conv(x)
+        # h_feat = self.feature_gat(x)
+        # h_temp = self.temporal_gat(x)
 
-        x = x + lsk_x
-        x = x.transpose(1, 2)
-        z = self.encoder(x)
-        z = self.activation(z)
+        # h_end = x + h_feat + h_temp
 
-        z = self.memory(z)
-
-        recon = self.recon(z)
-        recon = self.linear(recon)
-        recon = recon.transpose(1, 2)
-
-        pred = self.pred(z)
-        pred = self.linear(pred)
-        pred = pred.transpose(1, 2)
+        h_end = x + lsk_x + convx
+        pred = self.pred_model(h_end)
+        recon = self.recon_model(h_end)
 
         return pred, recon
 
@@ -293,7 +185,7 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
 
                     recon_loss = criterion(recon, input)
                     pred_loss = criterion(pred, label)
-                    loss = 0.6 * recon_loss + 0.4 * pred_loss
+                    loss = 0.7 * recon_loss + 0.3 * pred_loss
 
                     # 累计损失
                     val_epoch_loss += loss.item()
@@ -323,9 +215,11 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
 
 if __name__ == '__main__':
 
-    model = AAMP()
-    input = torch.randn(64,49,3).to(model.device)
-    label = torch.randn(64,1,3).to(model.device)
+    model = Dual_Flow_TCN(
+
+        )
+    input = torch.randn(64,49,3)
+    label = torch.randn(64,1,3)
     pred,recon = model(input)
     print(pred.shape)
     print(recon.shape)

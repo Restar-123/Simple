@@ -69,8 +69,8 @@ def my_train(model,params,train_loader,val_loader,test_loader,anomaly_label,idx=
     if (params["need_training"]):
         model.fit(train_loader = train_loader, val_loader = val_loader, epochs = params["nb_epoch"], lr = params["lr"])
         torch.save(model.state_dict(), params["model_root"] + '/model.pth')
-    # else:
-    #     model.load_state_dict(torch.load(model_pth + '/model.pth'))
+    else:
+        model.load_state_dict(torch.load(params["model_root"] + '/model.pth'))
 
     train_anomaly_score = model.predict_prob(train_loader)
     anomaly_score = model.predict_prob(test_loader)

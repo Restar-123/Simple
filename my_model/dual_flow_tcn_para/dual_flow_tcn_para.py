@@ -106,19 +106,19 @@ class Dual_Flow_TCN(nn.Module):
                                   padding=ae_padding,dropout_rate=ae_dropout,filters_conv1d=ae_filters_conv1d,activation_conv1d=ae_activation_conv1d,
                                   latent_sample_rate=ae_latent_sample_rate,use_skip_connections=ae_use_skip_connections)
 
-        self.device = set_device(device)
+        self.device = torch.device("cuda:" + str(device))
         self.to(self.device)
 
 
     def forward(self, x):
         lsk_x = self.lsk_block(x)
-        # convx = self.conv(x)
+        convx = self.conv(x)
         # h_feat = self.feature_gat(x)
         # h_temp = self.temporal_gat(x)
 
         # h_end = x + h_feat + h_temp
 
-        h_end = x + lsk_x
+        h_end = x + lsk_x + convx
         pred = self.pred_model(h_end)
         recon = self.recon_model(h_end)
 
@@ -187,7 +187,7 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
 
                     recon_loss = criterion(recon, input)
                     pred_loss = criterion(pred, label)
-                    loss = 0.6 * recon_loss + 0.4 * pred_loss
+                    loss = 0.7 * recon_loss + 0.3 * pred_loss
 
                     # 累计损失
                     val_epoch_loss += loss.item()
