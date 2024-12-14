@@ -1,6 +1,5 @@
 import os
 from ray import tune
-from networks_test.other.my_model_1.my_model_1 import MTAD_GAT
 import json
 from ray import train
 from my_utils import *
@@ -27,30 +26,10 @@ def train_model(config):
 
     # 获取数据
     params, train_loader, val_loader, test_loader, anomaly_label = load_data()
+    from my_model.aamp.aamp2 import AAMP
+    model = AAMP(device=0, next_steps=params["next_steps"], memory_size=config["memory_size"],)
 
-    # # 定义模型
-    # model = MTAD_GAT(
-    #     window_size=params["window_size"], next_steps=params["next_steps"],
-    #     pre_kernel_size=(3,9),
-    #     pre_nb_filters=20,
-    #     pre_dilations=(1,2,4,8),
-    #
-    #     ae_kernel_size=(3,9),
-    #     ae_dilations=(1,2,4,8),
-    #     ae_nb_filters=20,
-    #     ae_filters_conv1d=20,
-    #     lamb = config["lamb"],
-    # )
-    from my_model.tcn_pred_para.tcn_pred import TCN_PRED
-    model = TCN_PRED(
-                 dilations=config["dilations"],
-                 nb_filters=config["nb_filters"],
-                 kernel_size=config["kernel_size"],
-                 nb_stacks=config["nb_stacks"],
-    )
-
-    # 训练评估
-    best_f1 = my_train(model, params, train_loader, val_loader, test_loader, anomaly_label, "tcn_pre_para/"+name)
+    best_f1 = my_train(model, params, train_loader, val_loader, test_loader, anomaly_label, "aamp2/"+name)
     train.report({"best_f1": best_f1})
 
     # 将字典写入文件
@@ -62,18 +41,19 @@ def train_model(config):
 if __name__ == '__main__':
     from itertools import product
 
-    small_kernels = [3, 5, 7, 9, 11]
-    large_kernels = [11, 13, 15,17, 19,21]
-
-    kernel_sizes = [(s, l) for s, l in product(small_kernels, large_kernels) if s < l]
+    # small_kernels = [3, 5, 7, 9, 11]
+    # large_kernels = [11, 13, 15,17, 19,21]
+    #
+    # kernel_sizes = [(s, l) for s, l in product(small_kernels, large_kernels) if s < l]
     # 定义搜索空间
     config = {
-        "kernel_size": tune.choice(kernel_sizes),
-        "nb_filters": tune.choice([i for i in range(3,21)]),  # 搜索不同的滤波器数量 3到21
-        "dilations": tune.choice([(1, 2, 4, 8), (1, 2, 4), (1, 2)]),
-        "nb_stacks": tune.choice([1, 2, 3]),
+        # "kernel_size": tune.choice(kernel_sizes),
+        # "nb_filters": tune.choice([i for i in range(3,21)]),  # 搜索不同的滤波器数量 3到21
+        # "dilations": tune.choice([(1, 2, 4, 8), (1, 2, 4), (1, 2)]),
+        # "nb_stacks": tune.choice([1, 2, 3]),
 
         # "lamb": tune.choice([1,2,3,4]),
+        "memory_size": tune.randint(10, 101)
     }
 
     # 配置 Ray Tune，指定优化目标

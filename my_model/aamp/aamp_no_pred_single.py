@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from common.utils import set_device
-from .layers.tcn import TCN
+from .layers.tcn_single import TCN
 from torch.nn.parameter import Parameter
 
 from torch.nn import functional as F
@@ -167,7 +167,7 @@ class AAMP(nn.Module):
 
         ae_dilations=(1, 2, 4, 8),
         ae_nb_filters=20,
-        ae_kernel_size=(3,9),
+        ae_kernel_size=(3,3),
         ae_nb_stacks=1,
         ae_padding="same",
         ae_dropout=0.0,
@@ -201,9 +201,6 @@ class AAMP(nn.Module):
                            dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
                            n_steps=0)
 
-        self.pred = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
-                           dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
-                           n_steps=next_steps)
         self.activation = torch.nn.LeakyReLU(negative_slope=0.2)
         self.linear = torch.nn.Conv1d(ae_nb_filters, 3, kernel_size=1, padding=ae_padding)
         self.device = set_device(device)
@@ -224,28 +221,20 @@ class AAMP(nn.Module):
         recon = self.linear(recon)
         recon = recon.transpose(1, 2)
 
-        pred = self.pred(z)
-        pred = self.linear(pred)
-        pred = pred.transpose(1, 2)
+        return recon
 
-        return pred, recon
+    def fit(self, train_loader, val_loader, epochs, lr, criterion=nn.MSELoss()):
+        fit_template(self, train_loader, epochs, lr, criterion=nn.MSELoss())
 
-    def fit(self, train_loader, val_loader=None, epochs=20, lr=0.0001, criterion=nn.MSELoss()):
-        fit_mtad_gat(self, train_loader,val_loader, epochs, lr, criterion=nn.MSELoss())
-
-    def predict_prob(self, data_loader, window_labels=None):
-        self.to(self.device)
+    def predict_prob(self, dataloader, window_labels=None):
         self.eval()
         mse_func = nn.MSELoss(reduction="none")
         loss_steps = []
         with torch.no_grad():
-            for x, y in data_loader:
-                x = x.to(self.device)
-                y = y.to(self.device)
-                pred,recon = self(x)
-                window = torch.cat((x,y),dim=1)
-                pred_window = torch.cat((pred,recon),dim=1)
-                loss = mse_func(window, pred_window)
+            for input in dataloader:
+                input = input.to(self.device)
+                output = self(input)
+                loss = mse_func(input, output)
                 loss_steps.append(loss.detach().cpu().numpy())
         anomaly_scores = np.concatenate(loss_steps).mean(axis=(2, 1))
         if window_labels is not None:
@@ -254,78 +243,34 @@ class AAMP(nn.Module):
         else:
             return anomaly_scores
 
-def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, criterion=nn.MSELoss()):
+def fit_template(model, dataloader, epochs, lr, criterion=nn.MSELoss()):
     optimizer = torch.optim.AdamW(model.parameters(), lr, weight_decay=1e-5)
     train_start = time.time()
     for epoch in range(epochs):
         epoch_start = time.time()
         model.train()
-        train_pred_loss = 0.0
-        train_recon_loss = 0.0
-        train_epoch_loss = 0.0
-        for input,label in train_loader:
+        epoch_loss = 0.0
+        for input in dataloader:
             input = input.to(model.device)
-            label = label.to(model.device)
-            pred,recon = model(input)
-
-            recon_loss = criterion(recon, input)
-            pred_loss = criterion(pred,label)
-            loss = 1 * recon_loss + 0.01* pred_loss
+            output = model(input)
+            # 反向传播和优化
             optimizer.zero_grad()
+            loss = criterion(output, input)
+
             loss.backward()
             optimizer.step()
 
             # 累计损失
-            train_epoch_loss += loss.item()
-            train_pred_loss += pred_loss.item()
-            train_recon_loss += recon_loss.item()
+            epoch_loss += loss.item()
 
-        if(val_loader is not None):
-            model.eval()
-            val_pred_loss = 0.0
-            val_recon_loss = 0.0
-            val_epoch_loss = 0.0
-            with torch.no_grad():
-                for input, label in val_loader:
-                    input = input.to(model.device)
-                    label = label.to(model.device)
-                    pred, recon = model(input)
-
-                    recon_loss = criterion(recon, input)
-                    pred_loss = criterion(pred, label)
-                    loss = 0.6 * recon_loss + 0.4 * pred_loss
-
-                    # 累计损失
-                    val_epoch_loss += loss.item()
-                    val_pred_loss += pred_loss.item()
-                    val_recon_loss += recon_loss.item()
-            s = (f"[valid: ] "
-                 f"[Epoch {epoch + 1}] "
-                 f"pred_loss = {val_pred_loss / len(val_loader):.5f}, "
-                 f"recon_loss = {val_recon_loss / len(val_loader):.5f}, "
-                 f"loss = {val_epoch_loss / len(val_loader):.5f} "
-                 )
-            logging.info(s)
         epoch_time = time.time() - epoch_start
         s = (
-            f"[train: ] "
             f"[Epoch {epoch + 1}] "
-            f"pred_loss = {train_pred_loss / len(train_loader):.5f}, "
-            f"recon_loss = {train_recon_loss / len(train_loader):.5f}, "
-            f"loss = {train_epoch_loss / len(train_loader):.5f} "
+            f"loss = {epoch_loss / len(dataloader):.5f}, "
         )
-        s += f"  [{epoch_time:.2f}s]"
+        s += f" [{epoch_time:.2f}s]"
         logging.info(s)
-
+        print(s)
 
     train_time = int(time.time() - train_start)
     logging.info(f"-- Training done in {train_time}s")
-
-if __name__ == '__main__':
-
-    model = AAMP()
-    input = torch.randn(64,49,3).to(model.device)
-    label = torch.randn(64,1,3).to(model.device)
-    pred,recon = model(input)
-    print(pred.shape)
-    print(recon.shape)

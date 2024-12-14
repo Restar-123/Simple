@@ -184,6 +184,7 @@ class AAMP(nn.Module):
         pre_dropout_rate=0.0,
         pre_activation_conv1d='linear',
         pre_use_skip_connections=True,
+        memory_size = 100,
     ):
         super(AAMP, self).__init__()
 
@@ -196,12 +197,14 @@ class AAMP(nn.Module):
                            dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
                            n_steps=0)
         self.memory = MemModule(mem_dim=100, fea_dim=ae_nb_filters, shrink_thres=0.0025)
+        from .memory2 import Memory
+        self.memory2 =  Memory(memory_size, ae_nb_filters , ae_nb_filters , temp_update=0.1, temp_gather=0.1)
 
-        self.recon = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
+        self.recon = TCN(2*ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
                            dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
                            n_steps=0)
 
-        self.pred = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
+        self.pred = TCN(2*ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
                            dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
                            n_steps=next_steps)
         self.activation = torch.nn.LeakyReLU(negative_slope=0.2)
@@ -218,7 +221,12 @@ class AAMP(nn.Module):
         z = self.encoder(x)
         z = self.activation(z)
 
-        z = self.memory(z)
+        # z = self.memory(z)
+        B,C,T = z.shape
+        z = z.view(B,C,1,T)
+        z,g_loss, s_loss = self.memory2(z)
+        z = z.view(B,2*C,T)
+
 
         recon = self.recon(z)
         recon = self.linear(recon)
@@ -228,7 +236,7 @@ class AAMP(nn.Module):
         pred = self.linear(pred)
         pred = pred.transpose(1, 2)
 
-        return pred, recon
+        return pred, recon,g_loss,s_loss
 
     def fit(self, train_loader, val_loader=None, epochs=20, lr=0.0001, criterion=nn.MSELoss()):
         fit_mtad_gat(self, train_loader,val_loader, epochs, lr, criterion=nn.MSELoss())
@@ -242,7 +250,7 @@ class AAMP(nn.Module):
             for x, y in data_loader:
                 x = x.to(self.device)
                 y = y.to(self.device)
-                pred,recon = self(x)
+                pred,recon,g_loss,s_loss = self(x)
                 window = torch.cat((x,y),dim=1)
                 pred_window = torch.cat((pred,recon),dim=1)
                 loss = mse_func(window, pred_window)
@@ -266,11 +274,12 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
         for input,label in train_loader:
             input = input.to(model.device)
             label = label.to(model.device)
-            pred,recon = model(input)
+            pred,recon,g_loss,s_loss = model(input)
 
             recon_loss = criterion(recon, input)
             pred_loss = criterion(pred,label)
-            loss = 1 * recon_loss + 0.01* pred_loss
+
+            loss = 0.5 * recon_loss + 0.5 * pred_loss+ 0.1*g_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
