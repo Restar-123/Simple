@@ -14,7 +14,7 @@ from torch.nn import functional as F
 from .layers.modules import (
     ConvLayer,
 )
-
+from .mnad_keys import Memory
 
 class LSKblock1D(nn.Module):
     def __init__(self, dim):

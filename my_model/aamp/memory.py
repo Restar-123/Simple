@@ -1,72 +1,96 @@
 import torch.nn as nn
 import torch
+from torch.nn.parameter import Parameter
 
-class MemoryModule(nn.Module):
-    def __init__(self, memory_size, memory_dim):
-        super(MemoryModule, self).__init__()
-        self.memory = nn.Parameter(torch.randn(memory_size, memory_dim))  # 可学习的记忆矩阵
+from torch.nn import functional as F
+import math
 
-    def forward(self, query):
-        # 简单的记忆读取：计算查询与记忆的相似度并返回加权记忆
-        similarity = torch.matmul(query, self.memory.t())
-        attention_weights = torch.softmax(similarity, dim=-1)
-        memory_out = torch.matmul(attention_weights, self.memory)
-        return memory_out
+class MemoryUnit(nn.Module):
+    def __init__(self, mem_dim, fea_dim, shrink_thres=0.0025):
+        super(MemoryUnit, self).__init__()
+        self.mem_dim = mem_dim
+        self.fea_dim = fea_dim
+        self.weight = Parameter(torch.Tensor(self.mem_dim, self.fea_dim))  # M x C
+        self.bias = None
+        self.shrink_thres= shrink_thres
+        self.reset_parameters()
 
-if __name__ == '__main__':
-    model = MemoryModule(100,20)
-    input = torch.randn(64,50,3)
-    ouput = model(input)
-    print(ouput.shape)
+    def reset_parameters(self):
+        stdv = 1. / math.sqrt(self.weight.size(1))
+        self.weight.data.uniform_(-stdv, stdv)
+        if self.bias is not None:
+            self.bias.data.uniform_(-stdv, stdv)
+
+    def forward(self, input):
+        att_weight = F.linear(input, self.weight)  # Fea x Mem^T, (TxC) x (CxM) = TxM
+        att_weight = F.softmax(att_weight, dim=1)  # TxM
+        # ReLU based shrinkage, hard shrinkage for positive value
+        if(self.shrink_thres>0):
+            att_weight = hard_shrink_relu(att_weight, lambd=self.shrink_thres)
+            # att_weight = F.softshrink(att_weight, lambd=self.shrink_thres)
+            # normalize???
+            att_weight = F.normalize(att_weight, p=1, dim=1)
+            # att_weight = F.softmax(att_weight, dim=1)
+            # att_weight = self.hard_sparse_shrink_opt(att_weight)
+        mem_trans = self.weight.permute(1, 0)  # Mem^T, MxC
+        output = F.linear(att_weight, mem_trans)  # AttWeight x Mem^T^T = AW x Mem, (TxM) x (MxC) = TxC
+        return {'output': output, 'att': att_weight}  # output, att_weight
+
+    def extra_repr(self):
+        return 'mem_dim={}, fea_dim={}'.format(
+            self.mem_dim, self.fea_dim is not None
+        )
 
 
-import numpy as np
-import pandas as pd
-import matplotlib.pyplot as plt
-import pickle
+def hard_shrink_relu(input, lambd=0, epsilon=1e-12):
+    output = (F.relu(input-lambd) * input) / (torch.abs(input - lambd) + epsilon)
+    return output
 
-# 假设有一个原始数据框
-np.random.seed(40)  # 设置随机种子以确保可复现
-df = pd.read_csv("../data/CVT/test.csv")
+class MemModule(nn.Module):
+    def __init__(self, mem_dim, fea_dim, shrink_thres=0.0025):
+        super(MemModule, self).__init__()
+        self.mem_dim = mem_dim
+        self.fea_dim = fea_dim
+        self.shrink_thres = shrink_thres
+        self.memory = MemoryUnit(self.mem_dim, self.fea_dim, self.shrink_thres)
 
-n = df.shape[0]
+    def forward(self, input):
+        s = input.data.shape
+        l = len(s)
 
-# 随机选择多个误差时间段
-num_error_segments = np.random.randint(200, 210)  # 随机选择误差段数，200到250段
+        if l == 3:
+            x = input.permute(0, 2, 1)
+        elif l == 4:
+            x = input.permute(0, 2, 3, 1)
+        elif l == 5:
+            x = input.permute(0, 2, 3, 4, 1)
+        else:
+            x = []
+            print('wrong feature map size')
+        x = x.contiguous()
+        x = x.view(-1, s[1])
+        #
+        y_and = self.memory(x)
+        #
+        y = y_and['output']
+        att = y_and['att']
 
-# 用于标记误差的列
-df['label'] = 0
-
-# 存储已使用的误差段区间
-occupied_intervals = []
-
-# 设置每列发生误差的概率
-error_probabilities = {'a': 0.6, 'b': 0.5, 'c': 0.3}  # 'a' 列 80% 概率，'b' 列 50% 概率，'c' 列 30% 概率
-
-# 生成误差段
-error_segments = []
-for _ in range(num_error_segments):
-    # 随机选择误差段的开始位置和持续时间
-    error_start = np.random.randint(0, n - 100)  # 错误开始位置
-    error_length = np.random.randint(50, 60)  # 错误持续时间
-
-    # 记录这个误差段
-    occupied_intervals.append((error_start, error_length))
-
-    # 根据设置的概率选择需要施加误差的列
-    columns_to_error = []
-    for col, prob in error_probabilities.items():
-        if np.random.rand() < prob:  # 根据概率决定是否施加误差
-            columns_to_error.append(col)
-
-    # 随机选择误差幅度，在 0.2% 到 0.3% 之间浮动
-    error_percentage = np.random.uniform(0.003, 0.005)
-
-    # 记录误差段
-    error_segments.append((error_start, error_length, columns_to_error, error_percentage))
-
-# 对每个误差段施加误差
-for error_start, error_length, columns_to_error, error_percentage in error_segments:
-    for col in columns_to_error:
-        df.loc[error_start:error_start + error_length, [col]] *= (1 + error_percentage)
-    df.loc[error_start:error_start + error_length, 'label'] = 1
+        if l == 3:
+            y = y.view(s[0], s[2], s[1])
+            y = y.permute(0, 2, 1)
+            att = att.view(s[0], s[2], self.mem_dim)
+            att = att.permute(0, 2, 1)
+        elif l == 4:
+            y = y.view(s[0], s[2], s[3], s[1])
+            y = y.permute(0, 3, 1, 2)
+            att = att.view(s[0], s[2], s[3], self.mem_dim)
+            att = att.permute(0, 3, 1, 2)
+        elif l == 5:
+            y = y.view(s[0], s[2], s[3], s[4], s[1])
+            y = y.permute(0, 4, 1, 2, 3)
+            att = att.view(s[0], s[2], s[3], s[4], self.mem_dim)
+            att = att.permute(0, 4, 1, 2, 3)
+        else:
+            y = x
+            att = att
+        return y
