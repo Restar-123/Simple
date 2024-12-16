@@ -155,7 +155,7 @@ def hard_shrink_relu(input, lambd=0, epsilon=1e-12):
     return output
 
 
-class AAMP(nn.Module):
+class AAMP_NO_PRED(nn.Module):
     def __init__(
         self,
         n_features=3,
@@ -185,7 +185,7 @@ class AAMP(nn.Module):
         pre_activation_conv1d='linear',
         pre_use_skip_connections=True,
     ):
-        super(AAMP, self).__init__()
+        super(AAMP_NO_PRED, self).__init__()
 
         window_size = window_size - next_steps
         self.n_features = n_features

@@ -16,7 +16,6 @@ def my_load_data():
     # seed_everything(2024)
     with open('config_output.yaml', 'r') as file:
         params = yaml.safe_load(file)
-    logging.info(print_to_json(params))
 
     data_dict = load_dataset(
         data_root=params["data_root"],
@@ -65,7 +64,7 @@ def my_load_data():
 
 def my_train(model,params,train_loader,val_loader,test_loader,anomaly_label,idx=0):
     set_logger(params,str(idx))
-
+    logging.info(print_to_json(params))
     if (params["need_training"]):
         model.fit(train_loader = train_loader, val_loader = val_loader, epochs = params["nb_epoch"], lr = params["lr"])
         torch.save(model.state_dict(), params["model_root"] + '/model.pth')

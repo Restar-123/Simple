@@ -155,7 +155,7 @@ def hard_shrink_relu(input, lambd=0, epsilon=1e-12):
     return output
 
 
-class AAMP(nn.Module):
+class AAMP2(nn.Module):
     def __init__(
         self,
         n_features=3,
@@ -186,7 +186,7 @@ class AAMP(nn.Module):
         pre_use_skip_connections=True,
         memory_size = 100,
     ):
-        super(AAMP, self).__init__()
+        super(AAMP2, self).__init__()
 
         window_size = window_size - next_steps
         self.n_features = n_features
@@ -332,7 +332,7 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
 
 if __name__ == '__main__':
 
-    model = AAMP()
+    model = AAMP2()
     input = torch.randn(64,49,3).to(model.device)
     label = torch.randn(64,1,3).to(model.device)
     pred,recon = model(input)

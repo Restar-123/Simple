@@ -99,7 +99,7 @@ class UsadModel(nn.Module):
 def fit_usad(model, train_loader, epochs, lr, criterion=nn.MSELoss()):
     opt_func=torch.optim.Adam
     optimizer1 = opt_func(
-        list(model.encoder.parameters()) + list(model.decoder.parameters())
+        list(model.encoder.parameters()) + list(model.decoder1.parameters())
     )
     optimizer2 = opt_func(
         list(model.encoder.parameters()) + list(model.decoder2.parameters())

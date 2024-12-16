@@ -63,7 +63,7 @@ class LSKblock1D(nn.Module):
 
 
 
-class No_Memory(nn.Module):
+class AE_PRED(nn.Module):
     def __init__(
         self,
         n_features=3,
@@ -93,7 +93,7 @@ class No_Memory(nn.Module):
         pre_activation_conv1d='linear',
         pre_use_skip_connections=True,
     ):
-        super(No_Memory, self).__init__()
+        super(AE_PRED, self).__init__()
 
         window_size = window_size - next_steps
         self.n_features = n_features
@@ -218,7 +218,7 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
 
 if __name__ == '__main__':
 
-    model = No_Memory(
+    model = AE_PRED(
 
         )
     input = torch.randn(64,49,3)

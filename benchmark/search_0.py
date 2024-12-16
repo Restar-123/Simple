@@ -26,10 +26,11 @@ def train_model(config):
 
     # 获取数据
     params, train_loader, val_loader, test_loader, anomaly_label = load_data()
-    from my_model.aamp.aamp2 import AAMP
-    model = AAMP(device=0, next_steps=params["next_steps"], memory_size=config["memory_size"],)
+    # aamp
+    from my_model.aamp.aamp import AAMP
+    model = AAMP(device=0, next_steps=params["next_steps"], window_size=params["window_size"], a=config["a"])
 
-    best_f1 = my_train(model, params, train_loader, val_loader, test_loader, anomaly_label, "aamp2/"+name)
+    best_f1 = my_train(model, params, train_loader, val_loader, test_loader, anomaly_label, "aamp_a_search/"+name)
     train.report({"best_f1": best_f1})
 
     # 将字典写入文件
@@ -53,7 +54,8 @@ if __name__ == '__main__':
         # "nb_stacks": tune.choice([1, 2, 3]),
 
         # "lamb": tune.choice([1,2,3,4]),
-        "memory_size": tune.randint(10, 101)
+        # "memory_size": tune.randint(10, 101)
+        "a": tune.uniform(0, 0.5)
     }
 
     # 配置 Ray Tune，指定优化目标
@@ -66,7 +68,7 @@ if __name__ == '__main__':
         config=config,  # 配置搜索空间
         metric="best_f1",  # 优化的指标
         mode="max",  # 最大化最佳 F1 分数
-        num_samples=200,  # 运行 10 个不同的试验
+        num_samples=30,  # 运行 10 个不同的试验
         resources_per_trial={"gpu": 1},
         name="best_f1_tune",  # 试验名称
         search_alg=HyperOptSearch(),

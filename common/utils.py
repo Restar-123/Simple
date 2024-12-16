@@ -205,7 +205,7 @@ def set_logger(params, log, log_file=None):
         level=logging.INFO,
         format="%(asctime)s %(levelname)s %(message)s",
         datefmt="%m-%d %H:%M:%S",  # 不包含年份的时间格式
-        handlers=[logging.FileHandler(log_file, mode="w"), logging.StreamHandler()],
+        handlers=[logging.FileHandler(log_file, mode="a"), logging.StreamHandler()],
     )
 
     if params.get("device", -1) != -1:

@@ -155,7 +155,7 @@ def hard_shrink_relu(input, lambd=0, epsilon=1e-12):
     return output
 
 
-class AAMP_NO_PRED_LSK(nn.Module):
+class AAMP_NO_PRED_LSK_MEMORY(nn.Module):
     def __init__(
         self,
         n_features=3,
@@ -185,7 +185,7 @@ class AAMP_NO_PRED_LSK(nn.Module):
         pre_activation_conv1d='linear',
         pre_use_skip_connections=True,
     ):
-        super(AAMP_NO_PRED_LSK, self).__init__()
+        super(AAMP_NO_PRED_LSK_MEMORY, self).__init__()
 
         window_size = window_size - next_steps
         self.n_features = n_features
@@ -215,7 +215,7 @@ class AAMP_NO_PRED_LSK(nn.Module):
         z = self.encoder(x)
         z = self.activation(z)
 
-        z = self.memory(z)
+        # z = self.memory(z)
 
         recon = self.recon(z)
         recon = self.linear(recon)

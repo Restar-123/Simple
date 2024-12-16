@@ -171,12 +171,9 @@ class AAMP(nn.Module):
         ae_nb_stacks=1,
         ae_padding="same",
         ae_dropout=0.0,
-        ae_filters_conv1d=20,
-        ae_activation_conv1d='linear',
-        ae_latent_sample_rate=20,
         ae_use_skip_connections=True,
 
-        pre_dilations=(1, 2, 4, 8),
+        pre_dilations=(1, 2, 4,8),
         pre_nb_filters=20,
         pre_kernel_size=(3,9),
         pre_nb_stacks=1,
@@ -184,6 +181,7 @@ class AAMP(nn.Module):
         pre_dropout_rate=0.0,
         pre_activation_conv1d='linear',
         pre_use_skip_connections=True,
+        a = 0,
     ):
         super(AAMP, self).__init__()
 
@@ -201,19 +199,21 @@ class AAMP(nn.Module):
                            dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
                            n_steps=0)
 
-        self.pred = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=ae_kernel_size, nb_stacks=ae_nb_stacks,
-                           dilations=ae_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
+        self.pred = TCN(ae_nb_filters, nb_filters=ae_nb_filters, kernel_size=pre_kernel_size, nb_stacks=pre_nb_stacks,
+                           dilations=pre_dilations, padding=ae_padding, use_skip_connections=ae_use_skip_connections, dropout_rate=ae_dropout,
                            n_steps=next_steps)
         self.activation = torch.nn.LeakyReLU(negative_slope=0.2)
         self.linear = torch.nn.Conv1d(ae_nb_filters, 3, kernel_size=1, padding=ae_padding)
         self.device = set_device(device)
         self.to(self.device)
+        self.a = a
 
 
     def forward(self, x):
-        lsk_x = self.lsk_block(x)
-
-        x = x + lsk_x
+        # lsk_x = self.lsk_block(x)
+        #
+        # x = x + lsk_x
+        x = x
         x = x.transpose(1, 2)
         z = self.encoder(x)
         z = self.activation(z)
@@ -242,12 +242,17 @@ class AAMP(nn.Module):
             for x, y in data_loader:
                 x = x.to(self.device)
                 y = y.to(self.device)
-                pred,recon = self(x)
-                window = torch.cat((x,y),dim=1)
-                pred_window = torch.cat((pred,recon),dim=1)
-                loss = mse_func(window, pred_window)
+                pred, recon = self(x)
+                # window = torch.cat((x,y),dim=1)
+                # pred_window = torch.cat((pred,recon),dim=1)
+                # loss = mse_func(window, pred_window)
+                pred_loss = mse_func(pred, y)
+                recon_loss = mse_func(recon, x)
+                loss = self.a * pred_loss + (1 - self.a) * recon_loss
+                # loss = recon_loss
                 loss_steps.append(loss.detach().cpu().numpy())
         anomaly_scores = np.concatenate(loss_steps).mean(axis=(2, 1))
+        logging.info("mse:"+str(anomaly_scores.mean()))
         if window_labels is not None:
             anomaly_label = (window_labels.sum(axis=1) > 0).astype(int)
             return anomaly_scores, anomaly_label
@@ -270,7 +275,8 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
 
             recon_loss = criterion(recon, input)
             pred_loss = criterion(pred,label)
-            loss = 1 * recon_loss + 0.01* pred_loss
+            loss = model.a *pred_loss + (1-model.a) * recon_loss
+            # loss = 1 * recon_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()
