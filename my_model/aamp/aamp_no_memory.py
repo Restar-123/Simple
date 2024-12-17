@@ -6,7 +6,7 @@ import torch
 import torch.nn as nn
 import numpy as np
 from common.utils import set_device
-from .layers.tcn_single import TCN
+from .layers.tcn import TCN
 from torch.nn.parameter import Parameter
 
 from torch.nn import functional as F
@@ -155,7 +155,7 @@ def hard_shrink_relu(input, lambd=0, epsilon=1e-12):
     return output
 
 
-class AAMP_SINGLE(nn.Module):
+class AAMP_NO_MEMORY(nn.Module):
     def __init__(
         self,
         n_features=3,
@@ -183,7 +183,7 @@ class AAMP_SINGLE(nn.Module):
         pre_use_skip_connections=True,
         a = 0,
     ):
-        super(AAMP_SINGLE, self).__init__()
+        super(AAMP_NO_MEMORY, self).__init__()
 
         window_size = window_size - next_steps
         self.n_features = n_features
@@ -218,7 +218,7 @@ class AAMP_SINGLE(nn.Module):
         z = self.encoder(x)
         z = self.activation(z)
 
-        z = self.memory(z)
+        # z = self.memory(z)
 
         recon = self.recon(z)
         recon = self.linear(recon)
@@ -329,7 +329,7 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
 
 if __name__ == '__main__':
 
-    model = AAMP_SINGLE()
+    model = AAMP_NO_MEMORY()
     input = torch.randn(64,49,3).to(model.device)
     label = torch.randn(64,1,3).to(model.device)
     pred,recon = model(input)

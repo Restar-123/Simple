@@ -276,7 +276,6 @@ def fit_mtad_gat(model, train_loader, val_loader=None, epochs=20, lr=0.0001, cri
             recon_loss = criterion(recon, input)
             pred_loss = criterion(pred,label)
             loss = model.a *pred_loss + (1-model.a) * recon_loss
-            # loss = 1 * recon_loss
             optimizer.zero_grad()
             loss.backward()
             optimizer.step()

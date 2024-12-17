@@ -208,9 +208,9 @@ class AAMP_NO_PRED(nn.Module):
 
 
     def forward(self, x):
-        lsk_x = self.lsk_block(x)
+        # lsk_x = self.lsk_block(x)
 
-        x = x + lsk_x
+        x = x
         x = x.transpose(1, 2)
         z = self.encoder(x)
         z = self.activation(z)
@@ -237,6 +237,7 @@ class AAMP_NO_PRED(nn.Module):
                 loss = mse_func(input, output)
                 loss_steps.append(loss.detach().cpu().numpy())
         anomaly_scores = np.concatenate(loss_steps).mean(axis=(2, 1))
+        logging.info("mse:"+str(anomaly_scores.mean()))
         if window_labels is not None:
             anomaly_label = (window_labels.sum(axis=1) > 0).astype(int)
             return anomaly_scores, anomaly_label
